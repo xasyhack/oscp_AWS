@@ -21,40 +21,40 @@
 
   sudo service NetworkManager restart
   ```
-- Testing DNS config
+- Testing DNS config  
   `kali@kali:~$ host www.offseclab.io 44.205.254.229`  
   `kali@kali:~$ host www.offseclab.io`  
 - Resetting the DNS Settings
   `kali@kali:~$ sudo systemctl restart NetworkManager`  
 
 # Recon cloud resource on the internet  
-- Querying Nameserver Records of offseclab.io Domain
+- Querying Nameserver Records of offseclab.io Domain  
   `kali@kali:~$ host -t ns offseclab.io`  
   offseclab.io name server ns-1536.awsdns-00.co.uk.  
   offseclab.io name server ns-512.awsdns-00.net.  
-- Getting the Registrar Information of awsdns-00.com Domain
+- Getting the Registrar Information of awsdns-00.com Domain  
   `kali@kali:~$ whois awsdns-00.com | grep "Registrant Organization"` //Registrant Organization: Amazon Technologies, Inc.
 - Getting the Public IP address of www.offseclab.io  
   `kali@kali:~$ host www.offseclab.io`  // www.offseclab.io has address 52.70.117.69  
-- Getting Details of the Public IP Address of the Website
+- Getting Details of the Public IP Address of the Website  
   `kali@kali:~$ host 52.70.117.69`  //69.117.70.52.in-addr.arpa domain name pointer ec2-52-70-117-69.compute-1.amazonaws.com  
   `kali@kali:~$ whois 52.70.117.69 | grep "OrgName"`  //OrgName:        Amazon Technologies Inc.  
-- Learn: **resource hosted in AWS (amazonaws.com), and Amazon Elastic Compute Cloud (Amazon EC2) instance**.
-- Using **dnsenum** to Automate DNS Reconnaissance of offseclab.io Domain
+- Learn: **resource hosted in AWS (amazonaws.com), and Amazon Elastic Compute Cloud (Amazon EC2) instance**.  
+- Using **dnsenum** to Automate DNS Reconnaissance of offseclab.io Domain  
   `kali@kali:~$ dnsenum offseclab.io --threads 100`
-- Learn: likely AWS Route53 service, EC2 service, public IP serves several websites (www.offseclab.io)
+- Learn: likely AWS Route53 service, EC2 service, public IP serves several websites (www.offseclab.io)  
 - `host -t ns offseclab.io`: query the authoritative DNS servers for the domain offseclab.io  
-- Amazon Route 53 manage the offseclab.io domain
-- `host -t TXT offseclab.io`
+- Amazon Route 53 manage the offseclab.io domain  
+- `host -t TXT offseclab.io`  
 - browse http://www.offseclab.io, inspect browser network:https://s3.amazonaws.com/offseclab-assets-public-vvxepolu/sites/www/images/saphire.jpg. Stored in AWS S3 bucket  
-- S3 bucket name is: offseclab-assets-public-axevtewi. Object key is: sites/www/images/saphire.jpg.
+- S3 bucket name is: offseclab-assets-public-axevtewi. Object key is: sites/www/images/saphire.jpg.  
 - List the content of the bucket: https://s3.amazonaws.com/offseclab-assets-public-vvxepolu/ 
-- Guest naming convention: https://s3.amazonaws.com/offseclab-assets-private-vvxepolu/
-- Updating the Packages and Installing **cloud-enum** in Kali Linux
+- Guest naming convention: https://s3.amazonaws.com/offseclab-assets-private-vvxepolu/  
+- Updating the Packages and Installing **cloud-enum** in Kali Linux  
   `sudo apt install cloud-enum`  
-- Running Quick Scan Against offseclab-assets-public-axevtewi Bucket Using cloud_enum in AWS
+- Running Quick Scan Against offseclab-assets-public-axevtewi Bucket Using cloud_enum in AWS  
   `cloud_enum -k offseclab-assets-public-axevtewi --quickscan --disable-azure --disable-gcp`
-- Making a Dictionary of Keywords to Search S3 Bucket
+- Making a Dictionary of Keywords to Search S3 Bucket  
   `for key in "public" "private" "dev" "prod" "development" "production"; do echo "offseclab-assets-$key-axevtewi"; done | tee /tmp/keyfile.txt`
   ```
   offseclab-assets-public-axevtewi
@@ -64,11 +64,151 @@
   offseclab-assets-development-axevtewi
   offseclab-assets-production-axevtewi
   ```
-- Running cloud_enum Against The Generated keyfile.txt File
+- Running cloud_enum Against The Generated keyfile.txt File  
   `cloud_enum -kf /tmp/keyfile.txt -qs --disable-azure --disable-gcp`
-- Custom URLs of All the Three Major CSPs:s3.amazonaws.com，awsapps.com 
+- Custom URLs of All the Three Major CSPs:s3.amazonaws.com，awsapps.com  
 
 # Recon via CSP API  
+- Installing AWS CLI in Kali Linux  
+  `sudo apt install -y awscli`
+- Configuring Profile and Validating Communication with AWS API  
+  `aws configure --profile attacker`  
+  `aws --profile attacker sts get-caller-identity`
+  
+- Obtain Information from Publicly Shared Resources  
+  - Listing All Public AMIs Owned by Amazon AWS  
+    `aws --profile attacker ec2 describe-images --owners amazon --executable-users all`  
+  - The Filter Expression Format  
+    `--filters "Name=filter-name,Values=filter-value1,filter-value2,..."`  
+    `--filters "Name=description,Values=*Offseclab*"`  
+    `aws --profile attacker ec2 describe-images --executable-users all --filters "Name=description,Values=*Offseclab*"`  //no image  
+    `aws --profile attacker ec2 describe-images --executable-users all --filters "Name=name,Values=*Offseclab*"`  
+  - Listing Public Snapshots After Filtering the List Using the Keyword "description"  
+    `aws --profile attacker ec2 describe-snapshots --filters "Name=description,Values=*offseclab*"`  
+  - Use the attacker's account ID to search for other publicly shared resources. You will find a 1 GB-sized snapshot (VoumeSize: 1)  
+    `aws --profile attacker ec2 describe-snapshots --owner-ids $accountID --filter 'Name=volume-size,Values=1' --query 'Snapshots[].Description'`  
+- Obtain account IDs From Public S3 Buckets  
+  - locate a publicly readable bucket or object  
+  - create a policy and attach it to the attacker's IAM user  
+  - try listing the bucket with the Enum user credential  
+  - update the policy and try listing the bucket again  
+  - try listing the bucket with the Enum user credential  
+  - keep updating the policy untill all accountID's digits are discovered  
+
+  - Getting the Name of the Public Bucket with curl  
+    `curl -s www.offseclab.io | grep -o -P 'offseclab-assets-public-\w{8}'`  //offseclab-assets-public-kaykoour  
+  - Listing the Public Bucket as the attacker  
+    `aws --profile attacker s3 ls offseclab-assets-public-kaykoour`  //PRE sites/  
+  - Creating the IAM User "enum" and Generating AccessKeyId and SecretAccessKey for that User  
+    `aws --profile attacker iam create-user --user-name enum`  
+    `aws --profile attacker iam create-access-key --user-name enum`  
+  - Configuring AWS CLI with Profile "enum"  
+    `Configuring AWS CLI with Profile "enum"`
+  - Listing the Private Bucket with the enum User  
+    `aws --profile enum s3 ls offseclab-assets-private-kaykoour`  //AccessDenied
+  - Policy to Allow Listing Buckets and Reading Objects  
+    nano policy-s3-read.json  
+    ```
+    {
+     "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowResourceAccount",
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetObject"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringLike": {"s3:ResourceAccount": ["0*"]}
+            }
+        }
+      ]
+    }
+    ```
+  - Attaching the s3-read Inline Policy to the enum IAM User  
+    ```
+    aws --profile attacker iam put-user-policy \
+    --user-name enum \
+    --policy-name s3-read \
+    --policy-document file://policy-s3-read.json
+
+    aws --profile attacker iam list-user-policies --user-name enum  
+    ```
+  - user will be able to read the content of the bucket only if the account ID where the bucket resides starts with "0"  
+  - Modifying the Policy Condition Statement to Brute Force the AccountID  
+    ```
+    - __"StringLike": {"s3:ResourceAccount": ["10*"]}__
+    - __"StringLike": {"s3:ResourceAccount": ["11*"]}__
+    ```
+  - [s3-account-search](https://github.com/WeAreCloudar/s3-account-search)  
+- Enumerate IAM Users in Other Accounts  
+  - Creating a S3 Bucket in the attacker's Account  
+    `aws --profile attacker s3 mb s3://offseclab-dummy-bucket-$RANDOM-$RANDOM-$RANDOM`
+  - Policy Granting Permission to List the Bucket to a Single IAM User  
+    nano grant-s3-bucket-read.json  
+    ```
+    {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowUserToListBucket",
+            "Effect": "Allow",
+            "Resource": "arn:aws:s3:::offseclab-dummy-bucket-28967-25641-13328",
+            "Principal": {
+                "AWS": ["arn:aws:iam::123456789012:user/cloudadmin"]
+            },
+            "Action": "s3:ListBucket"
+
+        }
+      ]
+    }
+    ```
+  - Attaching the Resource Based Policy to the Test Bucket  
+    `aws --profile attacker s3api put-bucket-policy --bucket offseclab-dummy-bucket-28967-25641-13328 --policy file://grant-s3-bucket-read.json`
+  - create a new policy that grant privileges to a nonexistent principal  
+    nano grant-s3-bucket-read-userDoNotExist.json  
+    ```
+    "AWS": ["arn:aws:iam::123456789012:user/nonexistant"]
+     aws --profile attacker s3api put-bucket-policy --bucket offseclab-dummy-bucket-28967-25641-13328  --policy file://grant-s3-bucket-read-userDoNotExist.json //Invalid principal in policy    
+    ```
+  - When we tried to attach a resource-based policy to a bucket granting permissions to a Principal that does not exist, it returns an error message stating 'Invalid principal in policy'.  Automate this process to obtain a valid enumeration techqniue that will indicate whether a Principal exists.  
+  - Creating a List of Roles to Search in the Account  
+    ```
+    echo -n "lab_admin
+    security_auditor
+    content_creator
+    student_access
+    lab_builder
+    instructor
+    network_config
+    monitoring_logging
+    backup_restore
+    content_editor" > /tmp/role-names.txt
+    ```
+  - Installing pacu in Kali Linux Using the Package Manager  
+    `sudo apt install pacu`
+  - Starting pacu in Interactive Mode  
+    `pacu` 
+  - Importing the attacker Profile Credentials in pacu  
+    `Pacu (offseclab:No Keys Set) > import_keys attacker`  //Imported keys as "imported-attacker"  
+  - Listing Modules in pacu  
+    `Pacu (offseclab:imported-attacker) > ls`  
+    `Pacu (offseclab:imported-attacker) > help iam__enum_roles`  
+  - Running the enum_roles Module in pacu  
+    `run iam__enum_roles --word-list /tmp/role-names.txt --account-id 123456789012`  //Successfully assumed role for 1 hour: arn:aws:iam::562581731380:role/lab_admin
+  - Assume the role and list all available VPCs using the role privileges
+    ```
+    export AWS_ACCESS_KEY_ID="ASIAXXXXXXX"
+    export AWS_SECRET_ACCESS_KEY="XXXXXXXXXXXX"
+    export AWS_SESSION_TOKEN="XXXXXXXXXXXX"
+
+    aws ec2 describe-vpcs \
+    --region us-east-1 \
+    --query 'Vpcs[*].{VpcId:VpcId,Tags:Tags}' \
+    --output table
+    ```
 
 # IAM Recon  
 
