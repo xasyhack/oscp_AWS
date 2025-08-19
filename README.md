@@ -271,7 +271,107 @@ Password: I1Q_#n*O[3Rg4m!il351
     `aws --profile target iam list-policy-versions --policy-arn "arn:aws:iam::aws:policy/job-function/SupportUser"` //v9  
   - Listing a policy definition by its version  
     `aws --profile target iam get-policy-version --policy-arn arn:aws:iam::aws:policy/job-function/SupportUser --version-id v9`
-  - Use the challenge profile to scope the level of actions allowed to run in the EC2 service. Run the permitted actions to list or describe resources. Find the tag key "proof".
+  - Use the challenge profile to scope the level of actions allowed to run in the EC2 service. Run the permitted actions to list or describe resources. Find the tag key "proof".  
     `aws --profile challenge ec2 describe-vpcs`
   
-# IAM resource Enumeration
+# IAM resource Enumeration  
+**Compromised credentials**  
+- User: arn:aws:iam::123456789012:user/support/clouddesk-plove
+- Group: arn:aws:iam::123456789012:group/support/support
+- Policy: arn:aws:iam::aws:policy/job-function/SupportUser
+
+**Enumerating IAM resources**
+- Getting the permissions related to IAM service of the SupportUser policy  
+  `aws --profile target iam get-policy-version --policy-arn arn:aws:iam::aws:policy/job-function/SupportUser --version-id v8 | grep "iam"`  //get*, list*
+- Getting available IAM subcommands  
+  `aws --profile target iam help | grep -E "list-|get-|generate-"`
+- Getting the IAM Account Summary  
+  `aws --profile target iam get-account-summary | tee account-summary.json`
+- Listing IAM identities
+  `aws --profile target iam list-users | tee  users.json`  
+  `aws --profile target iam list-groups | tee groups.json`  
+  `aws --profile target iam list-roles | tee roles.json`
+- Listing policies (--scope Local to display only the Customer Managed Policies and omit the AWS Managed Policies)  
+  `aws --profile target iam list-policies --scope Local --only-attached | tee policies.json`  
+- Inline policies
+  ```
+  list-user-policies
+  get-user-policy
+  list-group-policies
+  get-group-policy
+  list-role-policies
+  get-role-policy
+  ```
+- Managed policies
+  ```
+  list-attached-user-policies
+  list-attached-group-policies
+  list-attached-role-policies
+  ```
+- Retrieving a snapshot of the IAM configuration with the get-account-authorization-details subcommand    
+  `aws --profile target iam get-account-authorization-details --filter User Group LocalManagedPolicy Role | tee account-authorization-details.json`  
+- Listing the managed policies of the clouddesk-plove IAM user  
+  `aws --profile target iam list-attached-user-policies --user-name clouddesk-plove`     
+- Getting an AccessDenied error when trying to list the policy versions of the deny_challenges_access policy     
+  `aws --profile target iam list-policy-versions --policy-arn arn:aws:iam::12345678912:policy/deny_challenges_access`  
+- Getting the list of policy versions from the output of the get-account-authorization-details command     
+  `aws --profile target iam get-account-authorization-details --filter LocalManagedPolicy`  
+
+**Processing API response data with JMESPath**  
+- Running get-account-authorization-details subcommand to get all IAM users information  
+  `aws --profile target iam get-account-authorization-details --filter User` // "UserName": "admin-alice"  
+- Querying the UserName key from the JSON document  
+  `aws --profile target iam get-account-authorization-details --filter User --query "UserDetailList[].UserName"`  
+- Quering for more than one key values  
+  `aws --profile target iam get-account-authorization-details --filter User --query "UserDetailList[0].[UserName,Path,GroupList]"`  
+  `aws --profile target iam get-account-authorization-details --filter User --query "UserDetailList[0].{Name: UserName,Path: Path,Groups: GroupList}"`  
+- Filtering all IAM Users whose names contain admin  
+  `aws --profile target iam get-account-authorization-details --filter User --query "UserDetailList[?contains(UserName, 'admin')].{Name: UserName}"`  
+- Constructing more advanced queries  
+  `aws --profile target iam get-account-authorization-details --filter User Group --query "{Users: UserDetailList[?Path=='/admin/'].UserName, Groups: GroupDetailList[?Path=='/admin/'].{Name: GroupName}}"`
+  ```
+    {
+     "Users": [
+         "admin-alice"
+     ],
+     "Groups": [
+         {
+             "Name": "admin"
+         }
+     ]
+  }
+  ```
+- What JMESPath expression will filter and display all users that contain the word "admin" in the Username and the Path fields?  
+  `?contains(UserName,'admin') && contains(Path,'admin')`
+  
+**Running Automated Enumeration with Pacu**     
+```
+kali@kali:~$ pacu
+What would you like to name this new session? enumlab
+Pacu (enumlab:No Keys Set) > import_keys target
+
+Pacu (enumlab:imported-target) > help iam__enum_users_roles_policies_groups
+```
+
+- IAM resources saved in Pacu database.  
+  `run iam__enum_users_roles_policies_groups`  
+- Reviewing the data collected in Pacu
+  ```
+  Pacu (enumlab:imported-target) > services
+  Pacu (enumlab:imported-target) > data IAM
+  ```
+  
+**Extrating insights from enumeration data**  
+- Getting the "admin-alice" IAM user details> username, group admin, tag keys, empty policies  
+  `aws --profile target iam get-account-authorization-details --filter User Group --query "UserDetailList[?UserName=='admin-alice']"`  
+- Getting the "admin" and "amethyst_admin" User Groups details  
+  `aws --profile target iam get-account-authorization-details --filter User Group --query "GroupDetailList[?GroupName=='admin']"`  
+   //"PolicyArn": "arn:aws:iam::aws:policy/AdministratorAccess"  
+  `aws --profile target iam get-account-authorization-details --filter User Group --query "GroupDetailList[?GroupName=='amethyst_admin']"`  
+  //"PolicyArn": "arn:aws:iam::123456789012:policy/amethyst/amethyst_admin"  
+- Analyzing the [AdminitratorAccess Policy](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AdministratorAccess.html) Document  
+- Getting the "amethyst_admin" policy statements  
+  `aws --profile target iam get-account-authorization-details --filter LocalManagedPolicy --query "Policies[?PolicyName=='amethyst_admin']"`  
+- [Cloudmapper](https://github.com/duo-labs/cloudmapper) provides visual representations of AWS configurations
+- To find IAM users whose policies contain a wildcard * that could lead to privilege escalation  
+  `aws --profile target iam get-account-authorization-details --filter User --query "UserDetailList[?UserPolicyList[?contains(PolicyDocument.Statement[].Action, '*')] || AttachedManagedPolicies[?PolicyName!=null]].UserName"`  
